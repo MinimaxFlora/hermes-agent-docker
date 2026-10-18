@@ -1,0 +1,39 @@
+# Gateway + Dashboard 示例
+#
+# 使用方式（Linux）：
+#   HERMES_UID=$(id -u) HERMES_GID=$(id -g) docker compose up -d
+#
+# 数据保存在宿主机的 ~/.hermes，容器内对应 /opt/data。
+# Dashboard 只监听 127.0.0.1:9119，请勿直接暴露到公网。
+#
+# macOS / Windows 的 Docker Desktop 不支持 network_mode: host，
+# 请先使用 `docker run -it` 的交互式 CLI，或参考上游文档调整网络配置。
+
+name: hermes-agent
+
+services:
+  gateway:
+    image: dockorae/hermes-agent:latest
+    container_name: hermes
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ~/.hermes:/opt/data
+    environment:
+      HERMES_UID: ${HERMES_UID:-10000}
+      HERMES_GID: ${HERMES_GID:-10000}
+    command: ["gateway", "run"]
+
+  dashboard:
+    image: dockorae/hermes-agent:latest
+    container_name: hermes-dashboard
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - gateway
+    volumes:
+      - ~/.hermes:/opt/data
+    environment:
+      HERMES_UID: ${HERMES_UID:-10000}
+      HERMES_GID: ${HERMES_GID:-10000}
+    command: ["dashboard", "--host", "127.0.0.1", "--no-open"]

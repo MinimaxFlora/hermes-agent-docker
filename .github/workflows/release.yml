@@ -1,0 +1,268 @@
+name: Release images
+
+# Tracks the latest stable upstream release, builds it for amd64 and arm64 on
+# native GitHub-hosted runners, then stitches the per-architecture images into
+# multi-arch manifests on Docker Hub and GHCR.
+#
+# Manual runs can pin a release tag, force a rebuild, build a single
+# architecture, or skip pushing entirely (useful for validating the pipeline).
+
+on:
+  schedule:
+    # Every 6 hours. GitHub may delay scheduled runs during peak load.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Upstream release tag to build (e.g. v0.22.2). Empty means latest release."
+        required: false
+        type: string
+        default: ""
+      force:
+        description: "Rebuild even if this version already exists in both registries."
+        required: false
+        type: boolean
+        default: false
+      push:
+        description: "Push to Docker Hub and GHCR. Disable for a build-only smoke test."
+        required: false
+        type: boolean
+        default: true
+      archs:
+        description: "Architectures to build."
+        required: false
+        type: choice
+        options:
+          - both
+          - amd64
+          - arm64
+        default: both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: NousResearch/hermes-agent
+  IMAGE_NAME: hermes-agent
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+  resolve:
+    name: Resolve upstream release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      commit: ${{ steps.resolve.outputs.commit }}
+      build: ${{ steps.resolve.outputs.build }}
+      push: ${{ steps.resolve.outputs.push }}
+      update_latest: ${{ steps.resolve.outputs.update_latest }}
+      arches: ${{ steps.resolve.outputs.arches }}
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      dockerhub_image: ${{ steps.resolve.outputs.dockerhub_image }}
+      ghcr_image: ${{ steps.resolve.outputs.ghcr_image }}
+      reason: ${{ steps.resolve.outputs.reason }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Log in to GHCR (read-only probe)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Resolve version and decide whether to build
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_INPUT: ${{ inputs.ref }}
+          FORCE_INPUT: ${{ inputs.force || false }}
+          PUSH_INPUT: ${{ inputs.push || false }}
+          ARCHES_INPUT: ${{ inputs.archs || 'both' }}
+          RUNNER_AMD64: ${{ vars.RUNNER_AMD64 || 'ubuntu-24.04' }}
+          RUNNER_ARM64: ${{ vars.RUNNER_ARM64 || 'ubuntu-24.04-arm' }}
+        run: bash scripts/resolve-upstream.sh
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 300
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+      COMMIT: ${{ needs.resolve.outputs.commit }}
+      DOCKERHUB_IMAGE: ${{ needs.resolve.outputs.dockerhub_image }}
+      GHCR_IMAGE: ${{ needs.resolve.outputs.ghcr_image }}
+      PUSH_IMAGES: ${{ needs.resolve.outputs.push }}
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
+        with:
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
+      - name: Add swap space
+        # The upstream Dockerfile compiles Python wheels and a Vite/TUI bundle.
+        # A 16 GB runner plus 8 GB of swap avoids OOM kills during cold builds.
+        run: |
+          if ! sudo fallocate -l 8G /mnt/hermes-swapfile; then
+            sudo dd if=/dev/zero of=/mnt/hermes-swapfile bs=1M count=8192 status=none
+          fi
+          sudo chmod 600 /mnt/hermes-swapfile
+          sudo mkswap /mnt/hermes-swapfile
+          sudo swapon /mnt/hermes-swapfile
+          free -h
+
+      - name: Checkout this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout upstream at the resolved tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: ${{ env.TAG }}
+          path: upstream
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Generate install stamp
+        run: |
+          python3 scripts/install_stamp.py \
+            --output upstream/install-stamp.json \
+            --version "${VERSION}" \
+            --commit "$(git -C upstream rev-parse HEAD)" \
+            --commit-date "$(git -C upstream log -1 --format=%ct)"
+          cat upstream/install-stamp.json
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to Docker Hub
+        if: env.PUSH_IMAGES == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        if: env.PUSH_IMAGES == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: upstream
+          file: upstream/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: ${{ env.PUSH_IMAGES == 'true' }}
+          tags: |
+            ${{ env.DOCKERHUB_IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+            ${{ env.GHCR_IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.title=Hermes Agent
+            org.opencontainers.image.description=Automated build of NousResearch/hermes-agent
+            org.opencontainers.image.url=https://github.com/NousResearch/hermes-agent
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#readme
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ env.COMMIT }}
+          build-args: |
+            HERMES_BOT_DESKTOP=0
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=hermes-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=hermes-${{ matrix.arch }},ignore-error=true
+
+      - name: Write build summary
+        run: |
+          {
+            echo "### Build linux/${{ matrix.arch }}"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Upstream tag | \`${TAG}\` |"
+            echo "| Upstream commit | \`${COMMIT}\` |"
+            echo "| Digest | \`${{ steps.build.outputs.digest || 'not pushed' }}\` |"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+  publish:
+    name: Publish multi-arch manifests
+    needs:
+      - resolve
+      - build
+    if: needs.resolve.outputs.build == 'true' && needs.resolve.outputs.push == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+      COMMIT: ${{ needs.resolve.outputs.commit }}
+      ARCHES: ${{ needs.resolve.outputs.arches }}
+      UPDATE_LATEST: ${{ needs.resolve.outputs.update_latest }}
+      DOCKERHUB_IMAGE: ${{ needs.resolve.outputs.dockerhub_image }}
+      GHCR_IMAGE: ${{ needs.resolve.outputs.ghcr_image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Create and verify manifests
+        run: bash scripts/publish-manifests.sh

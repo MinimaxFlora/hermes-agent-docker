@@ -1,0 +1,54 @@
+name: Lint
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+  lint:
+    name: Repository checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install tooling
+        run: npm ci --ignore-scripts
+
+      - name: Prettier and Markdown
+        run: npm run lint
+
+      - name: Install actionlint
+        run: bash scripts/ci/install-actionlint.sh
+
+      - name: Lint workflows
+        run: .tools/actionlint -color
+
+      - name: Lint shell scripts
+        run: shellcheck scripts/*.sh scripts/ci/*.sh
+
+      - name: Test install-stamp generator
+        run: python3 -m unittest discover -s tests -v

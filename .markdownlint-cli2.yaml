@@ -1,0 +1,15 @@
+config:
+  # Long lines are handled by Prettier and are unavoidable in tables and URLs.
+  MD013: false
+  # README uses inline HTML for the header.
+  MD033: false
+  # Allow the same heading text in different sections.
+  MD024:
+    siblings_only: true
+
+globs:
+  - "**/*.md"
+
+ignores:
+  - "node_modules/**"
+  - ".tools/**"

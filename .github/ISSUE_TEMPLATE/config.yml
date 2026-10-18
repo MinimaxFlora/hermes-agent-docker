@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Hermes Agent 应用问题
+    url: https://github.com/NousResearch/hermes-agent/issues
+    about: 应用功能、安装与使用问题请提交到上游仓库。
+  - name: 上游安全策略
+    url: https://github.com/NousResearch/hermes-agent/security/policy
+    about: 应用层安全漏洞请遵循上游的安全策略。

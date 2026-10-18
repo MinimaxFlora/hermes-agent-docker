@@ -1,0 +1,17 @@
+{
+  "name": "hermes-agent-docker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Automated multi-arch Docker images for NousResearch/hermes-agent",
+  "license": "MIT",
+  "scripts": {
+    "format": "prettier --write .",
+    "lint": "npm run lint:format && npm run lint:markdown",
+    "lint:format": "prettier --check .",
+    "lint:markdown": "markdownlint-cli2"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "0.23.3",
+    "prettier": "3.9.10"
+  }
+}

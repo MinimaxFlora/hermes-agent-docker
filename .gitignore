@@ -1,0 +1,21 @@
+# Tooling
+node_modules/
+.tools/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and OS noise
+*.log
+.DS_Store
+Thumbs.db
+
+# Local build output
+dist/
+build/
