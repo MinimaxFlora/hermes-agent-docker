@@ -184,15 +184,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: Build image
-        id: build
+      - name: Build linux/${{ matrix.arch }} (Docker Hub, by digest)
+        id: build_hub
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: upstream
           file: upstream/Dockerfile
           platforms: ${{ matrix.platform }}
-          # 只为最终 multi-arch manifest 准备 digest,不产生任何 -amd64 / -arm64 标签
-          outputs: ${{ env.PUSH_IMAGES == 'true' && format('type=image,name={0},name={1},push-by-digest=true,name-canonical=true,push=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
+          # 只按 digest 推送,不产生任何标签;最终标签由 publish 作业创建
+          outputs: ${{ env.PUSH_IMAGES == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.DOCKERHUB_IMAGE) || '' }}
           labels: |
             org.opencontainers.image.title=Hermes Agent
             org.opencontainers.image.description=Automated build of NousResearch/hermes-agent
@@ -209,20 +209,46 @@ jobs:
           cache-from: type=gha,scope=hermes-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=hermes-${{ matrix.arch }},ignore-error=true
 
-      - name: Export digest
+      - name: Build linux/${{ matrix.arch }} (GHCR, by digest)
+        id: build_ghcr
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: upstream
+          file: upstream/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: ${{ env.PUSH_IMAGES == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.GHCR_IMAGE) || '' }}
+          labels: |
+            org.opencontainers.image.title=Hermes Agent
+            org.opencontainers.image.description=Automated build of NousResearch/hermes-agent
+            org.opencontainers.image.url=https://github.com/NousResearch/hermes-agent
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#readme
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ env.COMMIT }}
+          build-args: |
+            HERMES_BOT_DESKTOP=0
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=hermes-${{ matrix.arch }}
+
+      - name: Export digests
         if: env.PUSH_IMAGES == 'true'
         run: |
           mkdir -p "${RUNNER_TEMP}/digests"
-          digest="${{ steps.build.outputs.digest }}"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::missing digest"; exit 1; }
-          printf '%s' "$digest" >"${RUNNER_TEMP}/digests/${{ matrix.arch }}.txt"
+          hub="${{ steps.build_hub.outputs.digest }}"
+          ghcr="${{ steps.build_ghcr.outputs.digest }}"
+          [[ "$hub" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::missing Docker Hub digest"; exit 1; }
+          [[ "$ghcr" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::missing GHCR digest"; exit 1; }
+          printf '%s' "$hub" >"${RUNNER_TEMP}/digests/${{ matrix.arch }}-dockerhub.txt"
+          printf '%s' "$ghcr" >"${RUNNER_TEMP}/digests/${{ matrix.arch }}-ghcr.txt"
 
-      - name: Upload digest
+      - name: Upload digests
         if: env.PUSH_IMAGES == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: digest-${{ matrix.arch }}
-          path: ${{ runner.temp }}/digests/${{ matrix.arch }}.txt
+          path: ${{ runner.temp }}/digests
           if-no-files-found: error
           retention-days: 1
 
@@ -235,7 +261,8 @@ jobs:
             echo "| --- | --- |"
             echo "| Upstream tag | \`${TAG}\` |"
             echo "| Upstream commit | \`${COMMIT}\` |"
-            echo "| Digest | \`${{ steps.build.outputs.digest || 'not pushed' }}\` |"
+            echo "| Docker Hub digest | \`${{ steps.build_hub.outputs.digest || 'not pushed' }}\` |"
+            echo "| GHCR digest | \`${{ steps.build_ghcr.outputs.digest || 'not pushed' }}\` |"
           } >>"${GITHUB_STEP_SUMMARY}"
 
   publish:

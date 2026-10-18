@@ -49,12 +49,16 @@ fi
 declare -A digests=()
 
 for image in "${DOCKERHUB_IMAGE}" "${GHCR_IMAGE}"; do
+  case "$image" in
+    "$GHCR_IMAGE") registry_key="ghcr" ;;
+    *)             registry_key="dockerhub" ;;
+  esac
   sources=()
   for arch in "${arch_list[@]}"; do
-    digest_file="${DIGEST_DIR}/${arch}.txt"
-    [[ -f "$digest_file" ]] || fail "Missing digest for ${arch}: ${digest_file}"
+    digest_file="${DIGEST_DIR}/${arch}-${registry_key}.txt"
+    [[ -f "$digest_file" ]] || fail "Missing ${registry_key} digest for ${arch}: ${digest_file}"
     digest="$(cat "$digest_file")"
-    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "Invalid digest for ${arch}: ${digest}"
+    [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "Invalid ${registry_key} digest for ${arch}: ${digest}"
     sources+=("${image}@${digest}")
   done
 
