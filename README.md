@@ -164,8 +164,15 @@ gh workflow run release.yml -f force=true
 # 只验证构建，不推送
 gh workflow run release.yml -f push=false -f archs=amd64
 
-# 构建指定版本
-gh workflow run release.yml -f ref=v0.22.2
+# 构建指定版本（版本已存在时同样需要 force）
+gh workflow run release.yml -f ref=v0.22.2 -f force=true
+```
+
+查看镜像的平台与 digest：
+
+```bash
+docker buildx imagetools inspect dockorae/hermes-agent:latest
+docker buildx imagetools inspect ghcr.io/minimaxflora/hermes-agent:latest
 ```
 
 ## 仓库结构
