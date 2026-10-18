@@ -29,7 +29,8 @@ notice() { printf '::notice::%s\n' "$*"; }
 fail() { printf '::error::%s\n' "$*" >&2; exit 1; }
 
 inspect_digest() {
-  docker buildx imagetools inspect "$1" | awk '$1 == "Digest:" {print $2; exit}'
+  # 不要用 exit 提前关闭管道:docker 会收到 SIGPIPE,在 pipefail 下变成 255
+  docker buildx imagetools inspect "$1" | awk '$1 == "Digest:" && !seen {d = $2; seen = 1} END {if (d) print d}'
 }
 
 inspect_platforms() {
