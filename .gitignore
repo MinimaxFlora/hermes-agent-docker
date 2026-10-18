@@ -19,3 +19,6 @@ Thumbs.db
 # Local build output
 dist/
 build/
+
+# local scratch scripts
+.tmp-*
