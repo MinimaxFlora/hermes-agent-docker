@@ -191,10 +191,8 @@ jobs:
           context: upstream
           file: upstream/Dockerfile
           platforms: ${{ matrix.platform }}
-          push: ${{ env.PUSH_IMAGES == 'true' }}
-          tags: |
-            ${{ env.DOCKERHUB_IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
-            ${{ env.GHCR_IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          # 只为最终 multi-arch manifest 准备 digest,不产生任何 -amd64 / -arm64 标签
+          outputs: ${{ env.PUSH_IMAGES == 'true' && format('type=image,name={0},name={1},push-by-digest=true,name-canonical=true,push=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
           labels: |
             org.opencontainers.image.title=Hermes Agent
             org.opencontainers.image.description=Automated build of NousResearch/hermes-agent
@@ -210,6 +208,23 @@ jobs:
           sbom: false
           cache-from: type=gha,scope=hermes-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=hermes-${{ matrix.arch }},ignore-error=true
+
+      - name: Export digest
+        if: env.PUSH_IMAGES == 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::missing digest"; exit 1; }
+          printf '%s' "$digest" >"${RUNNER_TEMP}/digests/${{ matrix.arch }}.txt"
+
+      - name: Upload digest
+        if: env.PUSH_IMAGES == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/${{ matrix.arch }}.txt
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Write build summary
         run: |
@@ -248,6 +263,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Download per-arch digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: List digests
+        run: |
+          ls -l "${{ runner.temp }}/digests"
+          for f in "${{ runner.temp }}/digests"/*.txt; do
+            printf '%s: %s\n' "$(basename "$f")" "$(cat "$f")"
+          done
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -265,4 +294,6 @@ jobs:
           password: ${{ github.token }}
 
       - name: Create and verify manifests
+        env:
+          DIGEST_DIR: ${{ runner.temp }}/digests
         run: bash scripts/publish-manifests.sh

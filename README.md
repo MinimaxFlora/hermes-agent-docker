@@ -45,22 +45,21 @@
 
 ## 标签规则
 
-| 标签                           | 含义                               | 可变性       |
-| ------------------------------ | ---------------------------------- | ------------ |
-| `latest`                       | 最新正式 Release                   | 随新版本移动 |
-| `0.22.2`                       | 上游 Release 版本（去掉 `v` 前缀） | 不可变       |
-| `v0.22.2`                      | 同上，保留 `v` 前缀的别名          | 不可变       |
-| `sha-1a2b3c4`                  | 上游 commit 前 7 位                | 不可变       |
-| `0.22.2-amd64`、`0.22.2-arm64` | 单架构源镜像                       | 不可变       |
+| 标签      | 含义                            | 可变性       |
+| --------- | ------------------------------- | ------------ |
+| `latest`  | 最新正式 Release                | 随新版本移动 |
+| `v0.22.2` | 上游 Release tag（带 `v` 前缀） | 不可变       |
 
 说明：
 
+- 每个 Release 只产生 **两个**标签：`latest` 和带 `v` 的版本标签；不再生成 `0.22.2`、`sha-*`、`-amd64` / `-arm64` 之类的重复标签。
+- 多架构由 manifest list 提供，两个标签本身都同时支持 `linux/amd64` 与 `linux/arm64`，不需要按架构单独拉取。
 - `latest` **只会**由“最新正式 Release”的自动构建或对应版本的手动构建更新，手动构建旧版本不会回退 `latest`。
 - 自动任务只跟踪 GitHub Release，不跟随上游 `main` 分支的每次提交，避免不可复现的构建。
-- 生产环境建议固定到不可变标签或 digest：
+- 生产环境建议固定到版本标签或 digest：
 
   ```bash
-  docker pull dockorae/hermes-agent:0.22.2
+  docker pull dockorae/hermes-agent:v0.22.2
   docker pull dockorae/hermes-agent@sha256:<digest>
   ```
 
@@ -144,7 +143,7 @@ flowchart LR
 
 1. **Resolve**：通过 GitHub API 取 `releases/latest`，用 `git ls-remote` 解析 tag 对应的 commit；分别探测 Docker Hub 与 GHCR 是否已存在该版本标签。两者都存在时直接跳过，节省构建资源。
 2. **Build**：在 `ubuntu-24.04`（amd64）与 `ubuntu-24.04-arm`（arm64）原生 Runner 上并行构建上游 `Dockerfile`，使用 BuildKit + GHA 缓存；构建前会生成 `install-stamp.json`，让 `hermes --version` 能报告真实的 commit。
-3. **Publish**：用 `docker buildx imagetools create` 把两个单架构镜像合并为多架构 manifest，写入 `latest`、版本号、`v` 前缀别名与 `sha-<commit>` 标签，并校验平台与 digest。
+3. **Publish**：用 `docker buildx imagetools create` 按 digest 把两个单架构镜像合并为多架构 manifest，只写入 `v0.22.2` 与 `latest` 两个标签，并校验平台与 digest。
 
 触发方式：
 

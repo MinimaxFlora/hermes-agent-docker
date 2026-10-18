@@ -114,22 +114,22 @@ if [[ "${FORCE}" == "true" ]]; then
 else
   hub_exists="false"
   ghcr_exists="false"
-  if dockerhub_has_tag "${version}"; then
+  if dockerhub_has_tag "${tag}"; then
     hub_exists="true"
   fi
-  if ghcr_has_tag "${version}"; then
+  if ghcr_has_tag "${tag}"; then
     ghcr_exists="true"
   fi
 
   if [[ "${hub_exists}" == "true" && "${ghcr_exists}" == "true" ]]; then
     build="false"
-    reason="version ${version} already published"
+    reason="tag ${tag} already published"
   elif [[ "${hub_exists}" == "false" && "${ghcr_exists}" == "false" ]]; then
-    reason="version ${version} missing from both registries"
+    reason="tag ${tag} missing from both registries"
   elif [[ "${hub_exists}" == "false" ]]; then
-    reason="version ${version} missing from Docker Hub"
+    reason="tag ${tag} missing from Docker Hub"
   else
-    reason="version ${version} missing from GHCR"
+    reason="tag ${tag} missing from GHCR"
   fi
 fi
 
