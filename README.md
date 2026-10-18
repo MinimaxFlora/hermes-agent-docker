@@ -225,9 +225,12 @@ python3 -m unittest discover -s tests -v
 ## Fork 与自定义
 
 1. Fork 本仓库。
-2. 在 **Settings → Secrets and variables → Actions** 中添加：
-   - `DOCKERHUB_USERNAME`：Docker Hub 用户名。
-   - `DOCKERHUB_TOKEN`：Docker Hub Access Token（Read & Write 权限）。
+2. 在 **Settings → Secrets and variables → Actions** 中配置：
+   - **Variables** → `DOCKERHUB_USERNAME`：Docker Hub 用户名（非机密）。
+   - **Secrets** → `DOCKERHUB_TOKEN`：Docker Hub Access Token（Read & Write 权限）。
+
+   > 用户名必须放在 Variables 而不是 Secrets：GitHub 会脱敏包含 Secret 值的输出，放在 Secret 中会导致镜像名输出被丢弃，构建标签变成空值。
+
 3. GHCR 使用内置的 `GITHUB_TOKEN`，无需额外配置；首次推送后请在包设置中确认可见性。
 4. 如需修改镜像名，调整 `release.yml` 顶部的 `IMAGE_NAME`；GHCR 命名空间自动使用仓库所有者（小写）。
 5. 私有仓库无法使用 `ubuntu-24.04-arm` 公共 Runner，可设置仓库变量 `RUNNER_ARM64` 指向自建 Runner，或只构建 `amd64`。
